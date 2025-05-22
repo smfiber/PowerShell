@@ -1,0 +1,39 @@
+# Ensure script runs with administrative privileges
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Warning "Please run this script as Administrator."
+    exit
+}
+
+# Display all installed drivers
+Write-Output "Listing all installed drivers..."
+$Drivers = Get-WmiObject Win32_PnPSignedDriver | Select-Object DeviceName, DriverVersion, Manufacturer, @{Name="DriverDate"; Expression={[datetime]::ParseExact($_.DriverDate.Substring(0,8), "yyyyMMdd", $null).ToString("MM/dd/yyyy")}}
+
+$Drivers | Format-Table -AutoSize
+
+# Prompt user before checking for outdated drivers
+$CheckUpdates = Read-Host "Would you like to check for outdated drivers? (Y/N)"
+if ($CheckUpdates -match "^[Yy]$") {
+    Write-Output "Checking for outdated drivers..."
+    $OutdatedDrivers = Get-WmiObject Win32_PnPSignedDriver | Where-Object { $_.DriverDate -lt (Get-Date).AddYears(-1) } | 
+        Select-Object DeviceName, DriverVersion, Manufacturer, @{Name="DriverDate"; Expression={[datetime]::ParseExact($_.DriverDate.Substring(0,8), "yyyyMMdd", $null).ToString("MM/dd/yyyy")}}
+    $OutdatedDrivers | Format-Table -AutoSize
+
+    # If outdated drivers are found, prompt for updates
+    if ($OutdatedDrivers.Count -gt 0) {
+        $UpdateDrivers = Read-Host "Outdated drivers detected. Would you like to update them now? (Y/N)"
+        if ($UpdateDrivers -match "^[Yy]$") {
+            Write-Output "Updating drivers via Windows Update..."
+            Install-WindowsUpdate -Category Drivers -AcceptAll -Verbose -IgnoreReboot
+            
+            # Scan for newer drivers using PnPUtil
+            Write-Output "Scanning for newer driver versions..."
+            pnputil /scan-devices
+            
+            Write-Output "Drivers have been updated where possible."
+        } else {
+            Write-Output "Driver update canceled by user."
+        }
+    } else {
+        Write-Output "No outdated drivers detected."
+           }
+    }
