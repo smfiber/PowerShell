@@ -1,4 +1,3 @@
-
 # Clear-TempFiles-And-RecycleBin.ps1
 # Safely clears temp files and empties the Recycle Bin on Windows 11
 # Run as administrator for best results
