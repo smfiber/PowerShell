@@ -1,3 +1,4 @@
+
 # Clear-TempFiles-And-RecycleBin.ps1
 # Safely clears temp files and empties the Recycle Bin on Windows 11
 # Run as administrator for best results
@@ -18,7 +19,7 @@ function Clear-Directory($Path) {
             }
             Write-Output "Cleared $count items from $Path"
         } catch {
-            Write-Warning "Failed to clear $Path: $_"
+            Write-Warning "Failed to clear $Path. Error: $($_.Exception.Message)"
         }
     } else {
         Write-Output "$Path does not exist."
@@ -42,7 +43,7 @@ try {
     $items = $recycleBin.Items()
     $count = $items.Count
     if ($count -gt 0) {
-        $recycleBin.InvokeVerb("Empty Recycle &Bin")
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
         Write-Output "Emptied Recycle Bin ($count items)."
     } else {
         Write-Output "Recycle Bin already empty."
