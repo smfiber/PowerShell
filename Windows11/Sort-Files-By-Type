@@ -1,0 +1,55 @@
+<#
+.SYNOPSIS
+    Automatically organizes files in a specified folder by file type.
+
+.DESCRIPTION
+    This script scans all files in a folder, creates subfolders based on file extensions,
+    and moves the files into their respective categorized directories.
+
+.PARAMETER TargetFolder
+    Defines the folder location where the script will organize files.
+    Default: "C:\FolderPath"
+
+.EXAMPLE
+    PS C:\> .\Organize-Downloads.ps1
+    Organizes all files in the "Downloads" folder by file type.
+
+.NOTES
+    Author: Andy Walch
+    Created: 5-22-2025
+    PowerShell Version: 5.1+
+    
+#>
+
+# Ensure script runs with administrative privileges
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Warning "Please run this script as Administrator."
+    exit
+}
+
+# Define the target folder (Ensure to provide the full absolute path)
+$TargetFolder = "C:\FolderPath"
+
+# Verify folder existence before proceeding
+if (Test-Path $TargetFolder) {
+    # Retrieve all files in the folder
+    $Files = Get-ChildItem -Path $TargetFolder -File
+
+    # Process each file by its extension
+    foreach ($File in $Files) {
+        $Extension = $File.Extension.TrimStart(".")  # Remove leading dot from extensions
+        $DestinationFolder = Join-Path -Path $TargetFolder -ChildPath $Extension
+
+        # Create folder if it does not exist
+        if (!(Test-Path $DestinationFolder)) {
+            New-Item -ItemType Directory -Path $DestinationFolder | Out-Null
+        }
+
+        # Move the file to the corresponding folder
+        Move-Item -Path $File.FullName -Destination $DestinationFolder -Force
+    }
+
+    Write-Output "Files successfully organized by type."
+} else {
+    Write-Warning "Folder not found: $TargetFolder"
+}
