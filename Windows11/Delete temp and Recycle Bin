@@ -1,0 +1,54 @@
+# Clear-TempFiles-And-RecycleBin.ps1
+# Safely clears temp files and empties the Recycle Bin on Windows 11
+# Run as administrator for best results
+
+# Function to remove files from a directory
+function Clear-Directory($Path) {
+    if (Test-Path $Path) {
+        try {
+            $items = Get-ChildItem -Path $Path -Recurse -Force -ErrorAction SilentlyContinue
+            $count = 0
+            foreach ($item in $items) {
+                try {
+                    Remove-Item $item.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                    $count++
+                } catch {
+                    Write-Verbose "Could not delete $($item.FullName): $_"
+                }
+            }
+            Write-Output "Cleared $count items from $Path"
+        } catch {
+            Write-Warning "Failed to clear $Path. Error: $($_.Exception.Message)"
+        }
+    } else {
+        Write-Output "$Path does not exist."
+    }
+}
+
+# Clear current user's temp folder
+$UserTemp = $env:TEMP
+Write-Output "Clearing user temp: $UserTemp"
+Clear-Directory -Path $UserTemp
+
+# Clear Windows temp folder
+$WindowsTemp = "C:\Windows\Temp"
+Write-Output "Clearing Windows temp: $WindowsTemp"
+Clear-Directory -Path $WindowsTemp
+
+# Empty Recycle Bin for all drives
+try {
+    $shell = New-Object -ComObject Shell.Application
+    $recycleBin = $shell.Namespace(0xA)
+    $items = $recycleBin.Items()
+    $count = $items.Count
+    if ($count -gt 0) {
+        Clear-RecycleBin -Force -ErrorAction SilentlyContinue
+        Write-Output "Emptied Recycle Bin ($count items)."
+    } else {
+        Write-Output "Recycle Bin already empty."
+    }
+} catch {
+    Write-Warning "Could not empty Recycle Bin: $_"
+}
+
+Write-Output "Cleanup complete."
