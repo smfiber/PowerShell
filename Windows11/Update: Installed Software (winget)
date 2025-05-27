@@ -1,87 +1,209 @@
-# Modified Script to Update All Installed Applications and Save Itself
+#------------------------------------------------------------------------------
+# Script Author: Andy Walch
+# Date Created:  2025-05-27
+# Description:   This PowerShell script interactively finds and updates
+#                installed applications using the winget package manager.
+#                It lists upgradable apps, prompts the user (Y/N/A/S/Q)
+#                for each update, and provides a final summary.
+#------------------------------------------------------------------------------
+# PowerShell Script for Interactive Application Updates via winget
+# This version does not include any self-saving functionality.
 
-# Define the winget exit code for "No applicable update found"
-# WINGET_ERROR_NO_APPLICABLE_UPDATE (0x8A15001E) is -1978335202
-$NoUpdatesFoundCode = -1978335202
+# --- Initialization ---
+$updatedApps = [System.Collections.Generic.List[PSCustomObject]]::new()
+$skippedApps = [System.Collections.Generic.List[PSCustomObject]]::new()
+$userQuit = $false
 
-Write-Host "🚀 Starting application update process (live run)..."
+Write-Host "Starting interactive application update process..." -ForegroundColor Yellow
 
-Write-Host "🔄 Updating winget sources..."
+# 1. Update winget sources
+Write-Host "`n Updating winget sources..."
 winget source update
+# You might want to add error checking for 'winget source update' if needed.
+Write-Host "Source update complete."
 
-Write-Host "⏳ Checking for available updates and upgrading all packages. This may take a while..."
-Write-Host "(Winget command: winget upgrade --all --silent --accept-package-agreements --accept-source-agreements)"
+# 2. Get list of upgradable packages
+Write-Host "`n Checking for available application updates..."
+# Use --accept-source-agreements to prevent prompts if sources were just added/updated
+$upgradeableOutput = winget list --upgrade-available --accept-source-agreements
+# For testing parsing without live winget:
+# $upgradeableOutput = @"
+# Name                               Id                                 Version      Available    Source
+# ----------------------------------------------------------------------------------------------------
+# Test App 1                         Test.App1                          1.0.0        1.1.0        winget
+# Another Test App                   Another.TestApp                    2.1.5        2.2.0        winget
+# Yet Another App with spaces        Yet.Another.App                    3.0          3.0.1        winget
+# Failing App Example                Failing.App.Example                0.9          1.0          winget
+# "@ -split [System.Environment]::NewLine
 
-# Execute the winget upgrade command
-winget upgrade --all --silent --accept-package-agreements --accept-source-agreements
 
-# Check the exit code from winget
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "✅ Live run: Updates applied successfully or no further action was needed after checking."
-} elseif ($LASTEXITCODE -eq $NoUpdatesFoundCode) {
-    Write-Host "ℹ️ Live run: No applicable updates found for any installed packages."
-} else {
-    Write-Host "⚠️ Live run: Winget process finished with code: $LASTEXITCODE. Some updates may have failed or an error occurred."
-    Write-Host "💡 You can try running 'winget upgrade --all' manually in a terminal for more details."
-}
-Write-Host "🏁 Live application update process finished."
-Write-Host "" # Adding a blank line for readability
+$appsToProcess = [System.Collections.Generic.List[PSCustomObject]]::new()
+$lines = $upgradeableOutput -split [System.Environment]::NewLine
 
-# --- Save the generated update script to C:\Scripts ---
-$scriptName = Read-Host "Enter a name for the update script (e.g., Update-AllApps, no extension)"
-$scriptPath = "C:\Scripts\$scriptName.ps1"
-
-# Ensure the C:\Scripts directory exists
-if (-not (Test-Path "C:\Scripts")) {
-    Write-Host "Creating directory C:\Scripts..."
-    try {
-        New-Item -Path "C:\" -Name "Scripts" -ItemType Directory -ErrorAction Stop | Out-Null
-        Write-Host "Directory C:\Scripts created."
-    } catch {
-        Write-Error "❌ Failed to create directory C:\Scripts. Error: $($_.Exception.Message)"
-        # Optionally exit or handle error further
-        exit 1
+# --- MODIFIED SECTION TO FIND DATA LINES (PowerShell v2 compatible) ---
+$dataLinesStartIndex = -1
+for ($j = 0; $j -lt $lines.Length; $j++) {
+    if ($lines[$j] -match '^-{5,}') { # Match the "----" separator line
+        $dataLinesStartIndex = $j + 1 # Data starts on the line *after* the separator
+        break
     }
 }
 
-# Define the content of the script to be saved
-# This content mirrors the update logic performed above
-$scriptContent = @'
-# PowerShell Script to Update All Installed Applications using winget
-# This script was generated and saved.
+$dataLines = @() # Initialize as an empty array
+if ($dataLinesStartIndex -ne -1 -and $dataLinesStartIndex -lt $lines.Length) {
+    # Select lines *after* the separator line up to the end of the array
+    $dataLines = $lines[$dataLinesStartIndex..($lines.Length - 1)]
+}
+# --- END OF MODIFIED SECTION ---
 
-# WINGET_ERROR_NO_APPLICABLE_UPDATE (0x8A15001E) is -1978335202.
-# This value will be used directly in the condition checks below.
+foreach ($line in $dataLines) {
+    $trimmedLine = $line.Trim()
+    if ($trimmedLine.Length -eq 0) { continue }
 
-Write-Host "🚀 Starting application update process..."
+    # Regex to parse: Name (can have spaces, non-greedy) ## ID (no spaces) # Version (no spaces) # Available (no spaces) # Source (optional, no spaces)
+    $regex = '^(?<Name>.+?)\s{2,}(?<Id>\S+)\s+(?<Version>\S+)\s+(?<Available>\S+)(\s+(?<Source>\S+))?$'
+    $match = [regex]::Match($trimmedLine, $regex)
 
-Write-Host "🔄 Updating winget sources..."
-winget source update
-# Consider adding a brief pause or check if source update was successful if needed in specific environments.
+    if ($match.Success) {
+        $appsToProcess.Add([PSCustomObject]@{
+            Name             = $match.Groups['Name'].Value.Trim()
+            Id               = $match.Groups['Id'].Value.Trim()
+            CurrentVersion   = $match.Groups['Version'].Value.Trim()
+            AvailableVersion = $match.Groups['Available'].Value.Trim()
+            Source           = if ($match.Groups['Source'].Success) { $match.Groups['Source'].Value.Trim() } else { "" }
+        })
+    } else {
+        Write-Warning "Could not parse line: $trimmedLine"
+    }
+}
 
-Write-Host "⏳ Checking for available updates and upgrading all packages. This may take a while..."
-Write-Host "(Winget command: winget upgrade --all --silent --accept-package-agreements --accept-source-agreements)"
+if ($appsToProcess.Count -eq 0) {
+    Write-Host "`n No application updates found after checking sources." -ForegroundColor Green
+    exit
+}
 
-# Execute the winget upgrade command
-winget upgrade --all --silent --accept-package-agreements --accept-source-agreements
+Write-Host "`nFound $($appsToProcess.Count) application(s) with available updates:" -ForegroundColor Cyan
+$appsToProcess | Format-Table Name, CurrentVersion, AvailableVersion, Id -AutoSize
 
-# Check the exit code from winget
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "✅ Updates applied successfully or no further action was needed after checking."
-} elseif ($LASTEXITCODE -eq -1978335202) { # Direct value for WINGET_ERROR_NO_APPLICABLE_UPDATE
-    Write-Host "ℹ️ No applicable updates found for any installed packages."
+
+# 3. Interactive Prompt and Update
+$updateAllRemaining = $false
+$skipAllRemaining = $false
+
+for ($i = 0; $i -lt $appsToProcess.Count; $i++) {
+    $app = $appsToProcess[$i]
+
+    if ($userQuit) { # If (Q)uit was chosen in a previous iteration
+        $skippedApps.Add([PSCustomObject]@{
+            Name             = $app.Name
+            Id               = $app.Id
+            CurrentVersion   = $app.CurrentVersion
+            AvailableVersion = $app.AvailableVersion
+            Status           = "Skipped (User Quit)"
+        })
+        continue
+    }
+
+    if ($skipAllRemaining) {
+        $skippedApps.Add([PSCustomObject]@{
+            Name             = $app.Name
+            Id               = $app.Id
+            CurrentVersion   = $app.CurrentVersion
+            AvailableVersion = $app.AvailableVersion
+            Status           = "Skipped (All Remaining)"
+        })
+        continue
+    }
+
+    $proceedWithUpdate = $false
+    $currentStatus = "" # For clarity in skipped list
+
+    if ($updateAllRemaining) {
+        $proceedWithUpdate = $true
+        Write-Host "`nAuto-updating $($app.Name) (version $($app.CurrentVersion) -> $($app.AvailableVersion)) due to 'Update All' selection." -ForegroundColor Green
+    } else {
+        Write-Host "`n--- Processing app $(($i)+1) of $($appsToProcess.Count) ---"
+        Write-Host "  Name:             $($app.Name)"
+        Write-Host "  Current Version:  $($app.CurrentVersion)"
+        Write-Host "  Available Version:$($app.AvailableVersion)"
+        Write-Host "  ID:               $($app.Id)"
+
+        $validChoice = $false
+        while (-not $validChoice) {
+            $rawChoice = Read-Host "Update this application? (Y)es, (N)o, (A)ll remaining, (S)kip all remaining, (Q)uit"
+            switch -Regex ($rawChoice.ToUpper()) {
+                '^Y$' { $proceedWithUpdate = $true;  $validChoice = $true; $currentStatus = "Chosen for update" }
+                '^N$' { $proceedWithUpdate = $false; $validChoice = $true; $currentStatus = "Skipped (No)" }
+                '^A$' { $proceedWithUpdate = $true;  $updateAllRemaining = $true; $validChoice = $true; $currentStatus = "Chosen for update (All)" }
+                '^S$' { $proceedWithUpdate = $false; $skipAllRemaining = $true;   $validChoice = $true; $currentStatus = "Skipped (All Remaining)" }
+                '^Q$' { $proceedWithUpdate = $false; $skipAllRemaining = $true;   $validChoice = $true; $userQuit = $true; $currentStatus = "Skipped (User Quit)" }
+                default { Write-Warning "Invalid choice. Please enter Y, N, A, S, or Q." }
+            }
+        }
+    }
+
+    if ($userQuit -and (-not $proceedWithUpdate)) { # If Quit was chosen, ensure we record it as skipped. $currentStatus is already set.
+         # Loop will continue to next iteration and $userQuit flag will handle it.
+    }
+
+    if ($proceedWithUpdate) {
+        Write-Host "Attempting to update $($app.Name) to $($app.AvailableVersion)..."
+        winget upgrade --id $app.Id --version $app.AvailableVersion --silent --accept-package-agreements --accept-source-agreements
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "$($app.Name) updated successfully (or was already up-to-date with the target version)." -ForegroundColor Green
+            $updatedApps.Add([PSCustomObject]@{
+                Name             = $app.Name
+                Id               = $app.Id
+                FromVersion      = $app.CurrentVersion
+                ToVersion        = $app.AvailableVersion 
+                Status           = "Updated"
+            })
+        } else {
+            Write-Warning " Failed to update $($app.Name). Winget exit code: $LASTEXITCODE"
+            $skippedApps.Add([PSCustomObject]@{
+                Name             = $app.Name
+                Id               = $app.Id
+                CurrentVersion   = $app.CurrentVersion
+                AvailableVersion = $app.AvailableVersion
+                Status           = "Update Failed (Code: $LASTEXITCODE)"
+            })
+        }
+    } else { # Handles N, S, Q choices where proceedWithUpdate is false
+        Write-Host "Skipping update for $($app.Name)."
+        $skippedApps.Add([PSCustomObject]@{
+            Name             = $app.Name
+            Id               = $app.Id
+            CurrentVersion   = $app.CurrentVersion
+            AvailableVersion = $app.AvailableVersion
+            Status           = $currentStatus 
+        })
+        if ($userQuit) {
+             Write-Host "User chose to quit. No more applications will be processed if loop continues." -ForegroundColor Yellow
+        } elseif ($skipAllRemaining -and $currentStatus -eq "Skipped (All Remaining)") { 
+            Write-Host "Skipping all further applications as per 'Skip all remaining' command." -ForegroundColor Yellow
+        }
+    }
+}
+
+
+# 4. Final Summary
+Write-Host "`n`n--- Update Summary ---" -ForegroundColor Cyan
+
+if ($updatedApps.Count -gt 0) {
+    Write-Host "`n Software Updated Successfully:" -ForegroundColor Green
+    $updatedApps | Format-Table Name, FromVersion, ToVersion, Id -AutoSize
 } else {
-    Write-Host "⚠️ Winget process finished with code: $LASTEXITCODE. Some updates may have failed or an error occurred."
-    Write-Host "💡 For details, you can try running 'winget upgrade --all' manually in a terminal."
+    Write-Host "`n No software was updated in this session." -ForegroundColor Yellow
 }
 
-Write-Host "🏁 Application update process finished."
-'@
-
-# Save the script content to the specified file path
-try {
-    Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8 -ErrorAction Stop
-    Write-Host "✅ Update script successfully saved to $scriptPath"
-} catch {
-    Write-Error "❌ Failed to save the script to $scriptPath. Error: $($_.Exception.Message)"
+if ($skippedApps.Count -gt 0) {
+    Write-Host "`n Software Not Updated (Skipped or Failed):" -ForegroundColor Yellow
+    $skippedApps | Sort-Object Name | Format-Table Name, CurrentVersion, AvailableVersion, Status, Id -AutoSize
+} else {
+    if ($updatedApps.Count -gt 0) { 
+        Write-Host "`nℹ️ All detected updates were processed successfully and no software was skipped." -ForegroundColor Green
+    }
 }
+
+Write-Host "`n Interactive application update process finished." -ForegroundColor Yellow
