@@ -1,0 +1,208 @@
+#------------------------------------------------------------------------------
+# Script Author: Andy Walch
+# Date Created:  2025-05-27
+# Last Modified: 2025-05-27 (Streamlined winget output to Name, Installed Version, Update Command for updatable apps)
+# Description:   This PowerShell script generates a software inventory.
+#                It lists software from the Registry. For winget packages,
+#                it now only lists applications that have an available update,
+#                displaying their Name, Installed Version, and the command
+#                to update them.
+#------------------------------------------------------------------------------
+
+# --- Helper Function to Convert Registry InstallDate ---
+Function Convert-RegistryInstallDate {
+    param (
+        [string]$RegistryDate
+    )
+    if ($RegistryDate -and $RegistryDate -match '^\d{8}$') {
+        try {
+            return [datetime]::ParseExact($RegistryDate, 'yyyyMMdd', $null).ToString('yyyy-MM-dd')
+        } catch {
+            return $RegistryDate # Return original if parsing fails
+        }
+    }
+    return $RegistryDate # Return original if not in expected format
+}
+
+# --- Function to Get Software from Registry ---
+Function Get-InstalledSoftwareFromRegistry {
+    [CmdletBinding()]
+    param (
+        [string[]]$RegistryPaths
+    )
+
+    $installedSoftware = [System.Collections.Generic.List[PSCustomObject]]::new()
+    $seenEntries = [System.Collections.Generic.HashSet[string]]::new() 
+
+    foreach ($path in $RegistryPaths) {
+        if (-not (Test-Path $path)) {
+            Write-Verbose "Registry path not found: $path"
+            continue
+        }
+
+        $subkeys = Get-ChildItem -Path $path -ErrorAction SilentlyContinue
+        if (-not $subkeys) {
+            continue
+        }
+
+        foreach ($key in $subkeys) {
+            $properties = $key | Get-ItemProperty -ErrorAction SilentlyContinue
+
+            $displayName = $properties.DisplayName
+            $displayVersion = $properties.DisplayVersion
+            $publisher = $properties.Publisher
+            $entryKey = "$($displayName)_$($displayVersion)_$($publisher)".ToLower()
+
+            if (-not [string]::IsNullOrWhiteSpace($displayName) -and $seenEntries.Add($entryKey)) {
+                $systemComponent = $properties.SystemComponent
+                $releaseType = $properties.ReleaseType
+                $isUpdateOrComponent = $false
+
+                if ($releaseType -in @('Security Update', 'Update Rollup', 'Hotfix', 'Service Pack')) {
+                    $isUpdateOrComponent = $true
+                }
+                if ($displayName -match '^(KB\d+|Security Update for|Update for|Hotfix for)') {
+                    $isUpdateOrComponent = $true
+                }
+                if (($systemComponent -eq 1) -or ($displayName -match '(Visual C\+\+|Redistributable|Language Pack|MUI Pack|Module|Runtime Environment|Service for)')) {
+                    $isUpdateOrComponent = $true
+                }
+                if ($properties.PackageType -eq "Hotfix" -or $properties.PackageType -eq "Update") { 
+                    $isUpdateOrComponent = $true
+                }
+
+                if (-not $isUpdateOrComponent) {
+                    $installDate = Convert-RegistryInstallDate -RegistryDate $properties.InstallDate
+                    $installLocation = $properties.InstallLocation
+                    $estimatedSizeKB = $properties.EstimatedSize 
+                    $estimatedSizeMB = if ($estimatedSizeKB) { [math]::Round($estimatedSizeKB / 1024, 2) } else { $null }
+                    
+                    $softwareEntry = [PSCustomObject]@{
+                        DisplayName     = $displayName
+                        DisplayVersion  = $displayVersion
+                        Publisher       = $publisher
+                        InstallDate     = $installDate
+                        InstallLocation = $installLocation
+                        EstimatedSizeMB = $estimatedSizeMB
+                        Source          = "Registry ($(Split-Path $path -Leaf))" 
+                    }
+                    $installedSoftware.Add($softwareEntry)
+                }
+            }
+        }
+    }
+    return $installedSoftware | Sort-Object DisplayName
+}
+
+# --- Function to Get Software from Winget ---
+Function Get-InstalledSoftwareFromWinget {
+    [CmdletBinding()]
+    param()
+
+    $wingetApps = [System.Collections.Generic.List[PSCustomObject]]::new()
+    Write-Host "`n⏳ Querying winget for installed packages... (this may take a moment)" -ForegroundColor Gray
+    try {
+        $wingetCommand = "winget list --accept-source-agreements --count 500" 
+        Write-Verbose "Executing: $wingetCommand"
+        $wingetOutput = Invoke-Expression $wingetCommand 
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "winget command '$wingetCommand' failed or returned an error. Exit Code: $LASTEXITCODE"
+            return $wingetApps
+        }
+        if ([string]::IsNullOrWhiteSpace($wingetOutput)) {
+            Write-Host "Winget command ran successfully but returned no output." -ForegroundColor Yellow
+            return $wingetApps
+        }
+    }
+    catch {
+        Write-Warning "Failed to execute winget. Ensure it is installed and in your PATH. Error: $($_.Exception.Message)"
+        return $wingetApps
+    }
+
+    $lines = $wingetOutput -split [System.Environment]::NewLine
+    $dataLinesStartIndex = -1
+    for ($j = 0; $j -lt $lines.Length; $j++) {
+        if ($lines[$j] -match '^-{5,}') {
+            $dataLinesStartIndex = $j + 1
+            break
+        }
+    }
+
+    if ($dataLinesStartIndex -ne -1 -and $dataLinesStartIndex -lt $lines.Length) {
+        $dataLines = $lines[$dataLinesStartIndex..($lines.Length - 1)]
+        foreach ($line in $dataLines) {
+            $trimmedLine = $line.Trim()
+            if ($trimmedLine.Length -eq 0) { continue }
+
+            $regex = '^(?<Name>.+?)\s{2,}(?<Id>\S+)\s+(?<Version>\S+)(\s+(?<Available>\S+))?(\s+(?<Source>\S+))?(\s+(?<Tags>.+))?$'
+            $match = [regex]::Match($trimmedLine, $regex)
+
+            if ($match.Success) {
+                $wingetApps.Add([PSCustomObject]@{
+                    Name      = $match.Groups['Name'].Value.Trim()
+                    Id        = $match.Groups['Id'].Value.Trim() 
+                    Version   = $match.Groups['Version'].Value.Trim() 
+                    Available = if ($match.Groups['Available'].Success -and -not [string]::IsNullOrWhiteSpace($match.Groups['Available'].Value)) {$match.Groups['Available'].Value.Trim()} else {'N/A'} 
+                    Source    = if ($match.Groups['Source'].Success -and -not [string]::IsNullOrWhiteSpace($match.Groups['Source'].Value)) {$match.Groups['Source'].Value.Trim()} else {'N/A'}
+                })
+            } else {
+                Write-Verbose "Could not parse winget line: $trimmedLine"
+            }
+        }
+    }
+    return $wingetApps | Sort-Object Name
+}
+
+# --- Main Script Execution ---
+Write-Host "🚀 Gathering software inventory..."
+Write-Host "------------------------------------------------------------------------------"
+Write-Host "ℹ️ Note: For a complete list from system-wide registry locations, run this script"
+Write-Host "    as an Administrator."
+Write-Host "------------------------------------------------------------------------------"
+
+
+# Registry Software
+Write-Host "`n--- Software Installed (From Registry) ---" -ForegroundColor Cyan
+$registryPaths = @(
+    "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+    "HKCU:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall" 
+)
+$registrySoftware = Get-InstalledSoftwareFromRegistry -RegistryPaths $registryPaths
+
+if ($registrySoftware.Count -gt 0) {
+    $registrySoftware | Format-Table DisplayName, DisplayVersion, Publisher, InstallDate, EstimatedSizeMB, InstallLocation -AutoSize -Wrap
+} else {
+    Write-Host "No application data found in the specified registry locations or all were filtered."
+}
+
+# Winget Software
+Write-Host "`n--- Winget Packages with Available Updates & Commands ---" -ForegroundColor Cyan 
+$allWingetSoftware = Get-InstalledSoftwareFromWinget
+
+if ($allWingetSoftware.Count -gt 0) {
+    # Filter for packages where an update is available AND then select the desired columns
+    $updatableSoftware = $allWingetSoftware | 
+        Where-Object { $_.Available -ne 'N/A' } | 
+        Select-Object @{Name="Name"; Expression={$_.Name}}, 
+                        @{Name="Installed Version"; Expression={$_.Version}}, 
+                        @{Name="Update Command"; Expression={"winget upgrade --id ""$($_.Id)"" --silent --accept-package-agreements --accept-source-agreements"}}
+
+    if ($updatableSoftware.Count -gt 0) {
+        Write-Host "Tip: If Update Commands appear wrapped, try widening your console window." -ForegroundColor DarkGray
+        $formatProperties = @(
+            @{Label="Name"; Expression="Name"; Width=40; Alignment="left"},
+            @{Label="Installed Version"; Expression="Installed Version"; Width=20; Alignment="left"},
+            @{Label="Update Command"; Expression="Update Command"; Width=120; Alignment="left"} 
+        )
+        $updatableSoftware | Format-Table $formatProperties -Wrap
+    } else {
+        Write-Host "No applications known to Winget found with available updates."
+    }
+} else {
+    Write-Host "No application data found via winget (winget might have failed or returned no items)."
+}
+
+Write-Host "`n🏁 Software inventory process complete." -ForegroundColor Yellow
