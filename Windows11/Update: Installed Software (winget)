@@ -1,0 +1,87 @@
+# Modified Script to Update All Installed Applications and Save Itself
+
+# Define the winget exit code for "No applicable update found"
+# WINGET_ERROR_NO_APPLICABLE_UPDATE (0x8A15001E) is -1978335202
+$NoUpdatesFoundCode = -1978335202
+
+Write-Host "🚀 Starting application update process (live run)..."
+
+Write-Host "🔄 Updating winget sources..."
+winget source update
+
+Write-Host "⏳ Checking for available updates and upgrading all packages. This may take a while..."
+Write-Host "(Winget command: winget upgrade --all --silent --accept-package-agreements --accept-source-agreements)"
+
+# Execute the winget upgrade command
+winget upgrade --all --silent --accept-package-agreements --accept-source-agreements
+
+# Check the exit code from winget
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✅ Live run: Updates applied successfully or no further action was needed after checking."
+} elseif ($LASTEXITCODE -eq $NoUpdatesFoundCode) {
+    Write-Host "ℹ️ Live run: No applicable updates found for any installed packages."
+} else {
+    Write-Host "⚠️ Live run: Winget process finished with code: $LASTEXITCODE. Some updates may have failed or an error occurred."
+    Write-Host "💡 You can try running 'winget upgrade --all' manually in a terminal for more details."
+}
+Write-Host "🏁 Live application update process finished."
+Write-Host "" # Adding a blank line for readability
+
+# --- Save the generated update script to C:\Scripts ---
+$scriptName = Read-Host "Enter a name for the update script (e.g., Update-AllApps, no extension)"
+$scriptPath = "C:\Scripts\$scriptName.ps1"
+
+# Ensure the C:\Scripts directory exists
+if (-not (Test-Path "C:\Scripts")) {
+    Write-Host "Creating directory C:\Scripts..."
+    try {
+        New-Item -Path "C:\" -Name "Scripts" -ItemType Directory -ErrorAction Stop | Out-Null
+        Write-Host "Directory C:\Scripts created."
+    } catch {
+        Write-Error "❌ Failed to create directory C:\Scripts. Error: $($_.Exception.Message)"
+        # Optionally exit or handle error further
+        exit 1
+    }
+}
+
+# Define the content of the script to be saved
+# This content mirrors the update logic performed above
+$scriptContent = @'
+# PowerShell Script to Update All Installed Applications using winget
+# This script was generated and saved.
+
+# WINGET_ERROR_NO_APPLICABLE_UPDATE (0x8A15001E) is -1978335202.
+# This value will be used directly in the condition checks below.
+
+Write-Host "🚀 Starting application update process..."
+
+Write-Host "🔄 Updating winget sources..."
+winget source update
+# Consider adding a brief pause or check if source update was successful if needed in specific environments.
+
+Write-Host "⏳ Checking for available updates and upgrading all packages. This may take a while..."
+Write-Host "(Winget command: winget upgrade --all --silent --accept-package-agreements --accept-source-agreements)"
+
+# Execute the winget upgrade command
+winget upgrade --all --silent --accept-package-agreements --accept-source-agreements
+
+# Check the exit code from winget
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "✅ Updates applied successfully or no further action was needed after checking."
+} elseif ($LASTEXITCODE -eq -1978335202) { # Direct value for WINGET_ERROR_NO_APPLICABLE_UPDATE
+    Write-Host "ℹ️ No applicable updates found for any installed packages."
+} else {
+    Write-Host "⚠️ Winget process finished with code: $LASTEXITCODE. Some updates may have failed or an error occurred."
+    Write-Host "💡 For details, you can try running 'winget upgrade --all' manually in a terminal."
+}
+
+Write-Host "🏁 Application update process finished."
+'@
+
+# Save the script content to the specified file path
+try {
+    Set-Content -Path $scriptPath -Value $scriptContent -Encoding UTF8 -ErrorAction Stop
+    Write-Host "✅ Update script successfully saved to $scriptPath"
+} catch {
+    Write-Error "❌ Failed to save the script to $scriptPath. Error: $($_.Exception.Message)"
+}
