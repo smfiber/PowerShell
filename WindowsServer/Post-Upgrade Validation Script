@@ -1,0 +1,91 @@
+# It compares current system state against the baseline captured during pre-upgrade. It checks:
+# OS version and build
+# Installed Windows roles and features
+# Disk and volume info
+# Active services
+# Local users/groups
+# Network and IP config
+# PostUpgradeValidation.ps1
+param (
+    [string]$BaselineFolder = "C:\PreUpgrade_Report_YYYY-MM-DD_HH-mm"
+)
+
+if (-Not (Test-Path $BaselineFolder)) {
+    Write-Error "Baseline folder not found: $BaselineFolder"
+    exit 1
+}
+
+$results = @()
+function Compare-File {
+    param (
+        [string]$fileName,
+        [string]$title
+    )
+
+    $current = New-TemporaryFile
+    switch ($fileName) {
+        "InstalledFeatures.txt" {
+            Get-WindowsFeature | Where-Object Installed -eq $true | Out-File $current
+        }
+        "Volumes.txt" {
+            Get-Volume | Out-File $current
+        }
+        "ActiveServices.txt" {
+            Get-Service | Where-Object {$_.Status -eq 'Running'} | Out-File $current
+        }
+        "IPConfig.txt" {
+            Get-NetIPAddress | Format-List | Out-File $current
+        }
+        "Adapters.txt" {
+            Get-NetAdapter | Format-List | Out-File $current
+        }
+        "LocalUsers.txt" {
+            Get-LocalUser | Out-File $current
+        }
+        "LocalGroups.txt" {
+            Get-LocalGroup | Out-File $current
+        }
+        "OS_Build.txt" {
+            systeminfo | Out-File $current
+        }
+        default {
+            Write-Warning "No logic defined for: $fileName"
+            return
+        }
+    }
+
+    $baseline = Join-Path $BaselineFolder $fileName
+    if (-Not (Test-Path $baseline)) {
+        Write-Warning "Missing baseline: $fileName"
+        return
+    }
+
+    $diff = Compare-Object -ReferenceObject (Get-Content $baseline) `
+                           -DifferenceObject (Get-Content $current) `
+                           -IncludeEqual:$false
+
+    if ($diff) {
+        $results += "$title: ⚠ DIFFERENCE FOUND"
+        $diff | Out-File -Append "$BaselineFolder\PostUpgrade_DIFF_$fileName"
+    } else {
+        $results += "$title: ✅ MATCH"
+    }
+
+    Remove-Item $current -Force
+}
+
+# Run comparisons
+Compare-File "OS_Build.txt" "OS Version"
+Compare-File "InstalledFeatures.txt" "Installed Roles & Features"
+Compare-File "Volumes.txt" "Disk Volumes"
+Compare-File "ActiveServices.txt" "Running Services"
+Compare-File "IPConfig.txt" "IP Configuration"
+Compare-File "Adapters.txt" "Network Adapters"
+Compare-File "LocalUsers.txt" "Local Users"
+Compare-File "LocalGroups.txt" "Local Groups"
+
+# Show results
+"`n=== POST-UPGRADE VALIDATION SUMMARY ==="
+$results | ForEach-Object { Write-Host $_ }
+
+"`nDetailed diffs (if any) saved in $BaselineFolder"
