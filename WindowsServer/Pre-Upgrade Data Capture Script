@@ -1,3 +1,13 @@
+# PowerShell script that automates pre-upgrade data capture for a Windows Server VM. It collects:
+# Installed Windows features & roles
+# IP configuration
+# Network adapter info
+# Local users & groups
+# Disk and volume info
+# OS version & build
+# Installed software
+# Active services
+# Time zone and regional settings
 # PreUpgradeSnapshot.ps1
 $timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
 $outDir = "C:\PreUpgrade_Report_$timestamp"
