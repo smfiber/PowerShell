@@ -1,0 +1,45 @@
+# PreUpgradeSnapshot.ps1
+$timestamp = Get-Date -Format "yyyy-MM-dd_HH-mm"
+$outDir = "C:\PreUpgrade_Report_$timestamp"
+New-Item -ItemType Directory -Path $outDir -Force | Out-Null
+
+# System Info
+Get-ComputerInfo | Out-File "$outDir\SystemInfo.txt"
+
+# OS Version
+systeminfo | Out-File "$outDir\OS_Build.txt"
+
+# Installed Features
+Get-WindowsFeature | Where-Object Installed -eq $true | Out-File "$outDir\InstalledFeatures.txt"
+
+# Installed Software
+Get-ItemProperty HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\* |
+Select DisplayName, DisplayVersion, Publisher, InstallDate |
+Where DisplayName | Sort DisplayName |
+Out-File "$outDir\InstalledSoftware.txt"
+
+# Local Users
+Get-LocalUser | Out-File "$outDir\LocalUsers.txt"
+
+# Local Groups
+Get-LocalGroup | Out-File "$outDir\LocalGroups.txt"
+
+# Network Config
+Get-NetIPAddress | Format-List | Out-File "$outDir\IPConfig.txt"
+Get-NetAdapter | Format-List | Out-File "$outDir\Adapters.txt"
+
+# Disk Info
+Get-Volume | Out-File "$outDir\Volumes.txt"
+Get-PhysicalDisk | Out-File "$outDir\PhysicalDisks.txt"
+
+# Services
+Get-Service | Where-Object {$_.Status -eq 'Running'} | Out-File "$outDir\ActiveServices.txt"
+
+# Time Zone
+Get-TimeZone | Out-File "$outDir\TimeZone.txt"
+
+# Export all to a ZIP file
+$zipFile = "C:\PreUpgrade_Report_$timestamp.zip"
+Compress-Archive -Path $outDir -DestinationPath $zipFile -Force
+
+Write-Host "`n✔ Pre-upgrade report saved to $zipFile"
