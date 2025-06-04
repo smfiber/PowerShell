@@ -1,0 +1,86 @@
+#Provides a high-level summary of replication status for all domain controllers. Highlights failures and replication delays.
+repadmin /replsummary
+
+#Displays only replication errors across all DCs, making it easy to spot and act on issues.
+repadmin /showrepl * /errorsonly
+
+#Outputs the inbound replication status for every domain controller and naming context. Useful for detailed troubleshooting.
+repadmin /showrepl *
+
+#Queries Active Directory for replication failures per server, showing time, count, and partner involved.
+Get-ADReplicationFailure -Scope Site -Target * |
+Select-Object Server, FirstFailureTime, FailureCount, LastError, Partner
+
+#Provides a structured view of replication attempts and outcomes, great for generating scheduled reports.
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain |
+Select-Object Server, Partner, LastReplicationSuccess, LastReplicationAttempt, LastReplicationResult
+
+#Loops through all sites in the domain to identify replication failures within each.
+Get-ADReplicationSite | ForEach-Object {
+    Get-ADReplicationFailure -Scope Site -Target $_.Name
+}
+
+#Manually triggers replication across all partitions for a specified DC and its partners.
+repadmin /syncall DCName /APeD
+
+#Clears the failure cache after resolving issues, ensuring fresh results in future checks.
+repadmin /failcache DCName /clear
+
+#Displays attribute-level replication metadata for a given object, including originating server and last modified time. Useful for diagnosing replication delays on specific users or groups.
+Get-ADReplicationAttributeMetadata -Object "CN=Administrator,CN=Users,DC=domain,DC=com" -Server DC01
+
+#Lists all domain controllers and the timestamp of their last successful replication, sorted to help quickly identify delays or inactive DCs.
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain |
+Select-Object Server, Partner, LastReplicationSuccess | Sort-Object LastReplicationSuccess
+
+#Ensures site link replication intervals are appropriate (not too infrequent or excessive) and aligned with your AD topology design.
+Get-ADReplicationSiteLink -Filter * | Select-Object Name, ReplicationFrequencyInMinutes
+
+#Displays replication connection details between domain controllers, helping visualize and audit the replication topology.
+Get-ADReplicationConnection -Filter * |
+Select-Object Name, SourceServer, DestinationServer, ReplicationSchedule
+
+#Creates a reusable report for documenting and reviewing AD replication health in change control or audit scenarios.
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain |
+Select Server, Partner, LastReplicationResult, LastReplicationAttempt |
+Export-Csv -Path "C:\ADReplicationReport.csv" -NoTypeInformation
+
+#Flags domain controllers that haven't successfully replicated in over 24 hours—potentially indicating outages or misconfigurations.
+$cutoff = (Get-Date).AddHours(-24)
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain |
+Where-Object { $_.LastReplicationSuccess -lt $cutoff } |
+Select Server, Partner, LastReplicationSuccess
+
+#Provides detailed replication info per naming context, including source DCs, schedule, and latency—ideal for in-depth DC-specific diagnostics.
+repadmin /showrepl DCName /bysrc /v
+
+#Calculates how long it's been since each DC pair last replicated. Flags outliers with unusually high latency.
+(Get-ADReplicationPartnerMetadata -Target * -Scope Domain).Where({ $_.LastReplicationSuccess }) |
+Select-Object Server, Partner, @{Name='LatencyMinutes';Expression={(New-TimeSpan -Start $_.LastReplicationSuccess).TotalMinutes}} |
+Sort-Object LatencyMinutes -Descending
+
+#Confirms whether each DC is online and reachable over ICMP. Quick sanity check before deeper replication testing.
+Test-Connection -ComputerName (Get-ADDomainController -Filter *).Name -Count 2
+
+#Triggers immediate full replication across all domain controllers and naming contexts. Useful after changes or fixes.
+(Get-ADDomainController -Filter *).Name | ForEach-Object {
+    repadmin /syncall $_ /AeP
+}
+
+#Generates a compact view of failed links per DC and when the last successful replication occurred—useful for daily health monitoring.
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain |
+Group-Object Server | ForEach-Object {
+    [PSCustomObject]@{
+        Server = $_.Name
+        FailedLinks = ($_.Group | Where-Object { $_.LastReplicationResult -ne 0 }).Count
+        OldestSuccess = ($_.Group | Sort-Object LastReplicationSuccess | Select-Object -First 1).LastReplicationSuccess
+    }
+}
+
+#Manually triggers replication for a specific naming context (e.g., domain partition) between two specified DCs.
+repadmin /replicate DCName PartnerDCName DC=domain,DC=com
+
+#Returns failed replication attempts in CSV format—great for scripting clean visual output or integrating with monitoring dashboards.
+repadmin /showrepl DCName /csv | ConvertFrom-Csv | Where-Object { $_.Result -ne "0" }
+
+
