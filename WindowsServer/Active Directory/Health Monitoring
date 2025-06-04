@@ -1,0 +1,41 @@
+#Provides metadata on replication status for each domain controller—ideal for baseline and latency checks.
+Get-ADReplicationPartnerMetadata -Target * -Scope Domain
+
+#Returns recent replication failures and their causes per DC—essential for spotting persistent or transient issues.
+Get-ADReplicationFailure -Scope Domain -Target *
+
+#Lists all domain controllers with role information and IPs—useful for verifying topology and placement.
+Get-ADDomainController -Filter * | Select-Object Name, IsGlobalCatalog, IsReadOnly, Site, IPv4Address
+
+#Validates whether key AD services are running on each DC.
+Get-Service -ComputerName DCName | Where-Object { $_.DisplayName -like "*Active Directory*" -or $_.Name -like "NTDS*" }
+
+#Performs an in-depth diagnostic of domain controller health, including replication, DNS, and service status. It’s a must-use companion to repadmin.
+dcdiag /v /c /e /s:DCName
+
+#Returns a list of all DCs in the domain and can test trust paths and secure channel status.
+nltest /dclist:domainname
+
+#Validates that a system's secure channel to the domain controller is intact—crucial for detecting domain join or trust issues.
+Test-ComputerSecureChannel -Verbose
+
+#Reviews recent warnings/errors from AD-specific event logs.
+Get-WinEvent -ComputerName DCName -LogName 'Directory Service' -MaxEvents 50
+
+#This script will create the folder C:\ADxRay and run a deep inventory of your entire Active Directory environment, indicating what’s bad and what’s good. 
+#All the tests and validations are explained and contains external links to official Microsoft documentation and/or well know blog post from MVPs.
+https://github.com/ClaudioMerola/ADxRay?utm_source=chatgpt.com
+
+#Active Directory Health Check with PowerShell Script
+https://www.alitajran.com/active-directory-health-check-powershell-script/?utm_source=chatgpt.com
+
+#PowerShell Active Directory helper functions to manage healthy Active Directory
+https://github.com/EvotecIT/ADEssentials
+
+#Repository for AsBuiltReport Microsoft Active Directory module
+https://github.com/AsBuiltReport/AsBuiltReport.Microsoft.AD?tab=readme-ov-file
+
+#The script to perform AD assessment including ADFS, ADSync checks
+https://gist.github.com/laymanstake/eaaa84e2282252cbeade5f81de995cfb
+
+
